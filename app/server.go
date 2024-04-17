@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"time"
 )
 
 func main() {
@@ -32,13 +34,35 @@ func handleConnection(conn net.Conn) {
 	defer func() {
 		if err := recover(); err != nil {
 			fmt.Println("Error accepting connection: ", err)
+			conn.Close()
 		}
-		conn.Close()
 	}()
 
-	_, err := io.WriteString(conn, "+PONG\r\n")
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
+	for {
+		scanner := bufio.NewScanner(conn)
+		scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+			advance, token, err = bufio.ScanLines(data, atEOF)
+			isEOF := len(data)-advance == 0
+			if isEOF {
+				return advance, token, bufio.ErrFinalToken
+			} else {
+				return advance, token, err
+			}
+		})
+
+		for scanner.Err() == nil && scanner.Scan() {
+			fmt.Println("Scanned", scanner.Text())
+		}
+		if scanner.Err() != nil {
+			fmt.Println("Error Scanner", scanner.Err())
+		}
+
+		fmt.Println("Writing")
+		_, err := io.WriteString(conn, "+PONG\r\n")
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
