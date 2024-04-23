@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"time"
+	"syscall"
 )
+
+var ErrEof = errors.New("EOF")
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -25,44 +28,65 @@ func main() {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
+			continue
 		}
+
 		go handleConnection(conn)
 	}
 }
 
 func handleConnection(conn net.Conn) {
 	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println("Error accepting connection: ", err)
-			conn.Close()
+		if err, ok := recover().(error); err != nil && ok {
+			fmt.Println("recover error handle connection: ", err)
+
+			switch {
+			// close connection if broken pipe or [ErrEof]
+			case errors.Is(err, ErrEof), errors.Is(err, syscall.EPIPE):
+				conn.Close()
+			}
 		}
 	}()
 
 	for {
 		scanner := bufio.NewScanner(conn)
 		scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+			// conn read hit ioEOF if connection closed by client
+			if atEOF {
+				return 0, nil, ErrEof
+			}
+
 			advance, token, err = bufio.ScanLines(data, atEOF)
 			isEOF := len(data)-advance == 0
-			if isEOF {
+
+			if isEOF && len(token) != 0 {
 				return advance, token, bufio.ErrFinalToken
 			} else {
 				return advance, token, err
 			}
 		})
 
-		for scanner.Err() == nil && scanner.Scan() {
+		for scanner.Scan() {
 			fmt.Println("Scanned", scanner.Text())
 		}
-		if scanner.Err() != nil {
-			fmt.Println("Error Scanner", scanner.Err())
+		if err := scanner.Err(); err != nil {
+			if opError, ok := err.(*net.OpError); ok {
+				fmt.Printf("It's op error: %+v\n", opError)
+				panic(opError.Err)
+			}
+
+			panic(err)
 		}
 
 		fmt.Println("Writing")
 		_, err := io.WriteString(conn, "+PONG\r\n")
 		if err != nil {
-			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			if opError, ok := err.(*net.OpError); ok {
+				fmt.Printf("It's op error: %+v\n", opError)
+				panic(opError.Err)
+			}
+			panic(err)
 		}
-		time.Sleep(500 * time.Millisecond)
+		fmt.Println()
 	}
 }
