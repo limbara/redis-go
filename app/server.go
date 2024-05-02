@@ -1,13 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"syscall"
+
+	"github.com/codecrafters-io/redis-starter-go/app/server"
 )
 
 var ErrEof = errors.New("EOF")
@@ -31,62 +30,8 @@ func main() {
 			continue
 		}
 
-		go handleConnection(conn)
-	}
-}
+		serverConn := server.NewConn(conn)
 
-func handleConnection(conn net.Conn) {
-	defer func() {
-		if err, ok := recover().(error); err != nil && ok {
-			fmt.Println("recover error handle connection: ", err)
-
-			switch {
-			// close connection if broken pipe or [ErrEof]
-			case errors.Is(err, ErrEof), errors.Is(err, syscall.EPIPE):
-				conn.Close()
-			}
-		}
-	}()
-
-	for {
-		scanner := bufio.NewScanner(conn)
-		scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
-			// conn read hit ioEOF if connection closed by client
-			if atEOF {
-				return 0, nil, ErrEof
-			}
-
-			advance, token, err = bufio.ScanLines(data, atEOF)
-			isEOF := len(data)-advance == 0
-
-			if isEOF && len(token) != 0 {
-				return advance, token, bufio.ErrFinalToken
-			} else {
-				return advance, token, err
-			}
-		})
-
-		for scanner.Scan() {
-			fmt.Println("Scanned", scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			if opError, ok := err.(*net.OpError); ok {
-				fmt.Printf("It's op error: %+v\n", opError)
-				panic(opError.Err)
-			}
-
-			panic(err)
-		}
-
-		fmt.Println("Writing")
-		_, err := io.WriteString(conn, "+PONG\r\n")
-		if err != nil {
-			if opError, ok := err.(*net.OpError); ok {
-				fmt.Printf("It's op error: %+v\n", opError)
-				panic(opError.Err)
-			}
-			panic(err)
-		}
-		fmt.Println()
+		go serverConn.Serve()
 	}
 }
